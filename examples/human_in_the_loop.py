@@ -47,8 +47,9 @@ approval_tool = LongRunningFunctionTool(func=ask_for_manager)
 agent = Agent(
     model=MODEL_GPT_4O_LITE_LLM,
     name="approval_agent",
-    instruction="Ask manager approval for any important task using the tool.",
-    tools=[approval_tool]
+    instruction="Ask manager approval for any important task using the tool. Output only APPROVED or PENDING",
+    tools=[approval_tool],
+    output_key="review_status"
 )
 
 # 6. Setting up the runner

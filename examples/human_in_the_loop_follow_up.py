@@ -1,9 +1,12 @@
 # Step 3: Create agent
 import asyncio
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from dotenv import load_dotenv
 from google.adk import Agent, Runner
+from google.adk.agents import BaseAgent, LoopAgent, SequentialAgent
+from google.adk.agents.invocation_context import InvocationContext
+from google.adk.events import Event, EventActions
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.sessions import DatabaseSessionService
 from google.adk.tools import LongRunningFunctionTool
@@ -47,15 +50,33 @@ def get_request_status():
 approval_tool = LongRunningFunctionTool(func=ask_for_manager)
 
 # 5. Setting up the agent
-agent = Agent(
+
+follow_up_agent = Agent(
     model=MODEL_GPT_4O_LITE_LLM,
     name="approval_agent",
-    instruction="Ask manager approval for any important task using the tool",
-    tools=[approval_tool]
+    instruction="Ask manager approval for any important task using the tool. Output only APPROVED or PENDING",
+    tools=[approval_tool],
+    output_key="review_status"
+)
+
+
+# Custom agent to check the status and escalate if 'approved'
+class CheckStatusAndEscalate(BaseAgent):
+    async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
+        status = ctx.session.state.get("review_status", "PENDING")
+        print("status ", status)
+        APPROVED = (status == "APPROVED")
+        yield Event(author=self.name, actions=EventActions(escalate=APPROVED))
+
+
+review_loop = LoopAgent(
+    name="CheckReviewLoop",
+    max_iterations=5,
+    sub_agents=[follow_up_agent, CheckStatusAndEscalate(name="approvalcheck")]
 )
 
 # 6. Setting uo the runner
-runner = Runner(agent=agent, app_name=APP_NAME, session_service=session_service)
+runner = Runner(agent=review_loop, app_name=APP_NAME, session_service=session_service)
 
 
 async def follow_up():
@@ -83,6 +104,9 @@ async def follow_up():
                             for part in event.content.parts:
                                 if part.text:
                                     print(f"[{event.author}]: {part.text}")
+                                    return part.text
 
 
-asyncio.run(follow_up())
+status = asyncio.run(follow_up())
+
+print("status :", status)
